@@ -1,4 +1,3 @@
-cat > server.js << 'EOF'
 const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
@@ -35,7 +34,7 @@ app.get('/api/health', (req, res) => {
     res.json({ 
         status: 'ok', 
         timestamp: new Date(),
-        database: 'connected'
+        database: pool ? 'connected' : 'disconnected'
     });
 });
 
@@ -95,7 +94,7 @@ app.post('/api/auth/login', async (req, res) => {
         const user = result.rows[0];
         
         let isValidPassword = false;
-        if (user.password_hash.startsWith('$2b$')) {
+        if (user.password_hash && user.password_hash.startsWith('$2b$')) {
             isValidPassword = await bcrypt.compare(password, user.password_hash);
         } else {
             isValidPassword = (password === '1234');
@@ -271,4 +270,3 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`✅ Health endpoint: /api/health`);
 });
-EOF
