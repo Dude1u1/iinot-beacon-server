@@ -9,22 +9,12 @@ const PORT = process.env.PORT || 8080;
 
 // CRITICAL FIX: Add connection timeouts to prevent hanging
 const pool = new Pool({
-    host: process.env.DB_HOST,
-    port: process.env.DB_PORT || 5432,
+    host: `/cloudsql/${process.env.CLOUD_SQL_CONNECTION_NAME}`,
     database: process.env.DB_NAME,
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
-    
-    // CRITICAL: Add these timeouts to fail fast
-    connectionTimeoutMillis: 5000, // Fail after 5 seconds if can't connect
-    idleTimeoutMillis: 30000,
-    max: 20,
-    
-    // Add retry logic
-    retryDelay: 1000,
-    
-    // SSL for production
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+    port: 5432,
+    connectionTimeoutMillis: 5000,
 });
 
 // Test database connection with timeout
