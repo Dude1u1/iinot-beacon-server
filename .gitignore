@@ -1,7 +1,5 @@
-cat > .gitignore << 'EOF'
+# .gitignore
 node_modules/
 .env
-.vscode/
 .DS_Store
-*.log
-EOF
+npm-debug.log
