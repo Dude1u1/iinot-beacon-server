@@ -22,17 +22,37 @@ console.log('JWT_SECRET:', process.env.JWT_SECRET ? '✅ [HIDDEN]' : '❌ Missin
 console.log('NODE_ENV:', process.env.NODE_ENV ? '✅ ' + process.env.NODE_ENV : '⚠️ Not set (defaults to development)');
 console.log('================================');
 
-// Database connection with better error handling
-const pool = new Pool({
-    host: process.env.DB_HOST,
-    port: parseInt(process.env.DB_PORT) || 5432,
-    database: process.env.DB_NAME,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    connectionTimeoutMillis: 5000, // Fail fast if can't connect
-    idleTimeoutMillis: 30000,
-    max: 20,
-});
+// Database connection with environment awareness
+let poolConfig;
+
+if (process.env.NODE_ENV === 'production') {
+    // Production: Use Cloud SQL socket (no port)
+    poolConfig = {
+        host: process.env.DB_HOST,  // Should be /cloudsql/...
+        database: process.env.DB_NAME,
+        user: process.env.DB_USER,
+        password: process.env.DB_PASSWORD,
+        connectionTimeoutMillis: 5000,
+        idleTimeoutMillis: 30000,
+        max: 20,
+    };
+    console.log('📡 Production mode: Using Cloud SQL socket at:', process.env.DB_HOST);
+} else {
+    // Development: Use localhost with port
+    poolConfig = {
+        host: process.env.DB_HOST || 'localhost',
+        port: parseInt(process.env.DB_PORT) || 5432,
+        database: process.env.DB_NAME,
+        user: process.env.DB_USER,
+        password: process.env.DB_PASSWORD,
+        connectionTimeoutMillis: 5000,
+        idleTimeoutMillis: 30000,
+        max: 20,
+    };
+    console.log('💻 Development mode: Connecting to', process.env.DB_HOST + ':' + (process.env.DB_PORT || '5432'));
+}
+
+const pool = new Pool(poolConfig);
 
 // Test database connection on startup
 const testConnection = async () => {
