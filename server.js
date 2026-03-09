@@ -26,15 +26,16 @@ console.log('================================');
 let poolConfig;
 
 if (process.env.NODE_ENV === 'production') {
-    // Production: Use Cloud SQL socket (no port)
+    // Production: Use Cloud SQL socket - CORRECT FORMAT
     poolConfig = {
-        host: process.env.DB_HOST,  // Should be /cloudsql/...
+        host: process.env.DB_HOST,  // Should be /cloudsql/project:region:instance
         database: process.env.DB_NAME,
         user: process.env.DB_USER,
         password: process.env.DB_PASSWORD,
         connectionTimeoutMillis: 5000,
         idleTimeoutMillis: 30000,
         max: 20,
+        // Important: Don't specify port for Unix socket
     };
     console.log('📡 Production mode: Using Cloud SQL socket at:', process.env.DB_HOST);
 } else {
