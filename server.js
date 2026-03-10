@@ -406,12 +406,202 @@ app.get('/api/alerts/:username', async (req, res) => {
     }
 });
 
+// ==================== NEW BEACON LOCATOR ENDPOINTS ====================
+
+// Report a beacon sighting (called by mobile apps when they detect any beacon)
+app.post('/api/beacon-sighting', async (req, res) => {
+    try {
+        const { 
+            beacon_id, 
+            reporter_username, 
+            latitude, 
+            longitude, 
+            timestamp,
+            rssi 
+        } = req.body;
+        
+        console.log(`📡 Beacon sighting reported: ${beacon_id} by ${reporter_username}`);
+        
+        // Validate required fields
+        if (!beacon_id || !reporter_username || !latitude || !longitude) {
+            return res.status(400).json({ error: 'Missing required fields' });
+        }
+        
+        // Get reporter's user ID
+        const userResult = await pool.query(
+            'SELECT id FROM users WHERE username = $1',
+            [reporter_username]
+        );
+        
+        if (userResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Reporter not found' });
+        }
+        
+        const reporterUserId = userResult.rows[0].id;
+        
+        // Check if this beacon is registered in the system (belongs to someone)
+        const beaconResult = await pool.query(
+            'SELECT id, user_id, beacon_name FROM beacons WHERE beacon_id = $1',
+            [beacon_id]
+        );
+        
+        // Always log the sighting (even if beacon not registered)
+        const sightingResult = await pool.query(
+            `INSERT INTO beacon_sightings 
+             (beacon_id, reporter_user_id, latitude, longitude, rssi, timestamp)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             RETURNING id`,
+            [beacon_id, reporterUserId, latitude, longitude, rssi, new Date(timestamp)]
+        );
+        
+        console.log(`✅ Sighting recorded with ID: ${sightingResult.rows[0].id}`);
+        
+        // If beacon is registered (belongs to someone), update its latest location
+        if (beaconResult.rows.length > 0) {
+            await pool.query(
+                `UPDATE beacons SET
+                    last_reported_location_lat = $1,
+                    last_reported_location_lng = $2,
+                    last_reported_by_user_id = $3,
+                    last_reported_at = $4,
+                    last_reported_rssi = $5
+                WHERE beacon_id = $6`,
+                [latitude, longitude, reporterUserId, new Date(timestamp), rssi, beacon_id]
+            );
+            
+            console.log(`📍 Updated location for beacon: ${beacon_id}`);
+            
+            // Get reporter's username for the alert
+            const reporterName = reporter_username;
+            const beaconOwner = beaconResult.rows[0].user_id;
+            const beaconName = beaconResult.rows[0].beacon_name || 'Your beacon';
+            
+            // Log if signal is strong (optional)
+            if (rssi && rssi > -60) {
+                console.log(`🔔 Strong signal! ${beaconName} is very close to ${reporterName}`);
+            }
+        }
+        
+        res.status(201).json({ 
+            success: true, 
+            message: 'Sighting recorded',
+            sighting_id: sightingResult.rows[0].id
+        });
+        
+    } catch (error) {
+        console.error('❌ Error recording beacon sighting:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// Get latest location of user's beacons
+app.get('/api/beacons/:username/locations', async (req, res) => {
+    try {
+        const { username } = req.params;
+        
+        // Get user ID
+        const userResult = await pool.query(
+            'SELECT id FROM users WHERE username = $1',
+            [username]
+        );
+        
+        if (userResult.rows.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        
+        const userId = userResult.rows[0].id;
+        
+        // Get all beacons with their latest location info
+        const result = await pool.query(
+            `SELECT 
+                b.id,
+                b.beacon_id,
+                b.beacon_name,
+                b.last_reported_location_lat AS latitude,
+                b.last_reported_location_lng AS longitude,
+                b.last_reported_at,
+                b.last_reported_rssi,
+                b.first_seen,
+                b.last_seen,
+                reporter.username AS last_reported_by
+            FROM beacons b
+            LEFT JOIN users reporter ON b.last_reported_by_user_id = reporter.id
+            WHERE b.user_id = $1
+            ORDER BY b.last_reported_at DESC NULLS LAST, b.last_seen DESC`,
+            [userId]
+        );
+        
+        res.json(result.rows);
+    } catch (error) {
+        console.error('❌ Error fetching beacon locations:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// Get location history for a specific beacon
+app.get('/api/beacons/:beaconId/history', async (req, res) => {
+    try {
+        const { beaconId } = req.params;
+        const { limit = 20 } = req.query;
+        
+        const result = await pool.query(
+            `SELECT 
+                bs.*,
+                reporter.username AS reported_by_username
+            FROM beacon_sightings bs
+            JOIN users reporter ON bs.reporter_user_id = reporter.id
+            WHERE bs.beacon_id = $1
+            ORDER BY bs.timestamp DESC
+            LIMIT $2`,
+            [beaconId, limit]
+        );
+        
+        res.json(result.rows);
+    } catch (error) {
+        console.error('❌ Error fetching beacon history:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// Get recent sightings (optional - for heat map feature)
+app.get('/api/sightings/recent', async (req, res) => {
+    try {
+        const { hours = 24, limit = 100 } = req.query;
+        
+        const result = await pool.query(
+            `SELECT 
+                bs.*,
+                reporter.username AS reported_by,
+                b.beacon_name,
+                owner.username AS owner_name
+            FROM beacon_sightings bs
+            JOIN users reporter ON bs.reporter_user_id = reporter.id
+            LEFT JOIN beacons b ON bs.beacon_id = b.beacon_id
+            LEFT JOIN users owner ON b.user_id = owner.id
+            WHERE bs.timestamp > NOW() - ($1 || ' hours')::INTERVAL
+            ORDER BY bs.timestamp DESC
+            LIMIT $2`,
+            [hours, limit]
+        );
+        
+        res.json(result.rows);
+    } catch (error) {
+        console.error('❌ Error fetching recent sightings:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
 // Start server
 app.listen(PORT, '0.0.0.0', () => {
     console.log('================================');
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`✅ Health endpoint: http://localhost:${PORT}/api/health`);
     console.log(`🔍 Debug endpoint: http://localhost:${PORT}/api/debug/db`);
+    console.log(`📍 Beacon Locator endpoints:`);
+    console.log(`   - POST /api/beacon-sighting`);
+    console.log(`   - GET  /api/beacons/:username/locations`);
+    console.log(`   - GET  /api/beacons/:beaconId/history`);
+    console.log(`   - GET  /api/sightings/recent`);
     console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log('================================');
 });
